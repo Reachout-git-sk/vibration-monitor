@@ -54,6 +54,9 @@ class StatusMonitor:
     def on_device_fault(self, code):
         return self._set(Status.FAULT, f"controller reported fault {code}")
 
+    def on_link_lost(self, reason):
+        return self._set(Status.FAULT, f"connection lost: {reason}")
+
     def on_disconnect(self):
         self.missed = 0
         return self._set(Status.DISCONNECTED, "not connected")
