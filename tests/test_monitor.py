@@ -72,3 +72,33 @@ def test_device_fault_and_disconnect():
 def test_bad_thresholds_rejected(kwargs):
     with pytest.raises(ValueError):
         Thresholds(**kwargs)
+
+
+def test_device_fault_latches_until_status_ok():
+    m = make()
+    m.on_value(0.2)
+    m.on_device_fault("OVERTEMP")
+    # readings in range must not hide the controller's fault
+    assert m.on_value(0.3) is False
+    assert m.status is Status.FAULT and "OVERTEMP" in m.reason
+    m.on_timeout()
+    assert "OVERTEMP" in m.reason
+    assert m.on_device_ok() is True
+    assert m.status is Status.FAULT  # until the next reading
+    assert m.on_value(0.3) is True
+    assert m.status is Status.OK
+
+
+def test_status_ok_without_fault_changes_nothing():
+    m = make()
+    m.on_value(0.2)
+    assert m.on_device_ok() is False
+    assert m.status is Status.OK
+
+
+def test_disconnect_clears_latched_fault():
+    m = make()
+    m.on_device_fault("OVERTEMP")
+    m.on_disconnect()
+    m.on_value(0.2)
+    assert m.status is Status.OK

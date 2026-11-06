@@ -9,7 +9,7 @@ import time
 
 from PySide6.QtCore import QThread, Signal
 
-from .parser import DeviceError, Fault, ParseError, ReplyTimeout, Value
+from .parser import DeviceError, Fault, Ok, ParseError, ReplyTimeout, Value
 from .serial_link import CommandRejected, LinkError, SerialLink
 from .stream import RmsWindow
 
@@ -22,6 +22,7 @@ class AcquisitionThread(QThread):
     timed_out = Signal()
     bad_reply = Signal(str)
     device_fault = Signal(str)
+    device_ok = Signal()
     link_opened = Signal(str)
     link_lost = Signal(str)
     command_result = Signal(bool, str)
@@ -95,6 +96,8 @@ class AcquisitionThread(QThread):
                     reply = link.status()
                     if isinstance(reply, Fault):
                         self.device_fault.emit(reply.code)
+                    elif isinstance(reply, Ok):
+                        self.device_ok.emit()
                 reply = link.read_value()
                 if isinstance(reply, Value):
                     self.reading.emit(time.monotonic(), reply.value)

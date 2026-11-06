@@ -83,3 +83,19 @@ def test_read_sample_stream_mode():
     link._ser = fake
     s = link.read_sample()
     assert s.timestamp_ms == 1000 and s.az == 0.98
+
+
+def test_line_cut_off_by_timeout_is_not_a_reading():
+    # readline() hit its timeout after "VAL 0.4"; the rest of "VAL 0.41\n" never came
+    link, _ = link_with({"READ?": b"VAL 0.4"})
+    with pytest.raises(ReplyTimeout, match="incomplete line"):
+        link.read_value()
+
+
+def test_stream_sample_cut_off_by_timeout():
+    fake = FakeSerial()
+    fake._pending = b"1000,0.1,0.2"
+    link = SerialLink("COM9", opener=opener_for(fake))
+    link._ser = fake
+    with pytest.raises(ReplyTimeout):
+        link.read_sample()

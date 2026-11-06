@@ -204,6 +204,7 @@ class MainWindow(QMainWindow):
         self.thread.timed_out.connect(self._on_timeout)
         self.thread.bad_reply.connect(self._on_bad_reply)
         self.thread.device_fault.connect(self._on_device_fault)
+        self.thread.device_ok.connect(self._on_device_ok)
         self.thread.link_opened.connect(self._on_opened)
         self.thread.link_lost.connect(self._on_lost)
         self.thread.command_result.connect(self._on_command_result)
@@ -297,6 +298,10 @@ class MainWindow(QMainWindow):
         if self.monitor.on_device_fault(code):
             self._status_changed()
         self._show_status()
+
+    def _on_device_ok(self):
+        if self.monitor.on_device_ok():
+            self.logger.event("controller fault cleared (STATUS? OK)")
 
     def _on_command_result(self, ok, msg):
         self.logger.event(msg)

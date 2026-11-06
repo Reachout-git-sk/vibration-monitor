@@ -77,6 +77,19 @@ def test_silent_controller_raises_fault(qtbot, window):
     assert "no reply" in window.monitor.reason
 
 
+def test_controller_fault_stays_until_status_ok(qtbot, window):
+    sim = ControllerSim(spike_prob=0, silence_prob=0, seed=1)
+    sim.device_fault = "OVERTEMP"
+    wait_connected(qtbot, window, start_sim(lambda r, w: _serve_commands(r, w, sim)))
+    qtbot.waitUntil(lambda: "OVERTEMP" in window.monitor.reason, timeout=5000)
+    # normal readings keep arriving, but the fault must not be hidden by them
+    start = window.counts["readings"]
+    qtbot.waitUntil(lambda: window.counts["readings"] >= start + 5, timeout=5000)
+    assert window.monitor.status is Status.FAULT and "OVERTEMP" in window.monitor.reason
+    sim.device_fault = None
+    qtbot.waitUntil(lambda: window.monitor.status is Status.OK, timeout=5000)
+
+
 def test_stream_mode_from_sensor_node(qtbot, window):
     url = start_sim(lambda r, w: _serve_stream(w, SensorNodeSim(rate_hz=200, seed=1), 200))
     wait_connected(qtbot, window, url, mode=MODE_STREAM)

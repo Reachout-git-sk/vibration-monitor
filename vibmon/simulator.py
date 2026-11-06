@@ -31,6 +31,7 @@ class ControllerSim:
         self.t0 = clock()
         self.silent_until = 0.0
         self.faults_injected = {"spike": 0, "silence": 0}
+        self.device_fault = None  # set to a code, e.g. "OVERTEMP", to report FAULT on STATUS?
 
     def reading(self):
         t = self.clock() - self.t0
@@ -54,7 +55,7 @@ class ControllerSim:
         cmd = line.strip()
         upper = cmd.upper()
         if upper == "STATUS?":
-            return "OK"
+            return f"FAULT {self.device_fault}" if self.device_fault else "OK"
         if upper == "READ?":
             return f"VAL {self.reading():.4f}"
         if upper == "GAIN?":

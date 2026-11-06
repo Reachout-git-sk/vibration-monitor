@@ -29,6 +29,7 @@ class StatusMonitor:
         self.status = Status.DISCONNECTED
         self.reason = "not connected"
         self.missed = 0
+        self.device_fault = None  # code of a latched controller fault
 
     def _set(self, status, reason):
         changed = status != self.status
@@ -38,6 +39,8 @@ class StatusMonitor:
     def on_value(self, value):
         """Feed one reading. Returns True if the status changed."""
         self.missed = 0
+        if self.device_fault is not None:
+            return False  # a controller fault holds FAULT until STATUS? says OK again
         t = self.thresholds
         if value >= t.fault:
             return self._set(Status.FAULT, f"reading {value:.3f} g >= fault limit {t.fault:g} g")
@@ -47,16 +50,30 @@ class StatusMonitor:
 
     def on_timeout(self):
         self.missed += 1
+        if self.device_fault is not None:
+            return False
         if self.missed >= self.thresholds.max_missed:
             return self._set(Status.FAULT, f"no reply for {self.missed} consecutive polls")
         return False
 
     def on_device_fault(self, code):
+        self.device_fault = code
         return self._set(Status.FAULT, f"controller reported fault {code}")
+
+    def on_device_ok(self):
+        """STATUS? answered OK. Returns True if this released a latched fault.
+
+        The status stays FAULT until the next reading sets it from the limits.
+        """
+        if self.device_fault is None:
+            return False
+        self.device_fault = None
+        return True
 
     def on_link_lost(self, reason):
         return self._set(Status.FAULT, f"connection lost: {reason}")
 
     def on_disconnect(self):
         self.missed = 0
+        self.device_fault = None
         return self._set(Status.DISCONNECTED, "not connected")

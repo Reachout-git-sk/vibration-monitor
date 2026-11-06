@@ -8,7 +8,7 @@
 import serial
 from serial.tools import list_ports
 
-from .parser import DeviceError, parse_reply, parse_sample
+from .parser import DeviceError, ReplyTimeout, parse_reply, parse_sample
 
 
 class LinkError(Exception):
@@ -62,9 +62,15 @@ class SerialLink:
 
     def _readline(self):
         try:
-            return self._ser.readline()
+            line = self._ser.readline()
         except (serial.SerialException, OSError) as exc:
             raise LinkError(f"read failed: {exc}") from exc
+        # readline() also returns when the timeout hits halfway through a line;
+        # "VAL 0.4" without its newline may be the start of "VAL 0.41", so it
+        # is an incomplete reply, not a reading
+        if line and not line.endswith(b"\n"):
+            raise ReplyTimeout(f"incomplete line {bytes(line)!r}")
+        return line
 
     def query(self, command):
         """Send one command and parse the single-line reply.

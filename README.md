@@ -15,7 +15,9 @@ STM32 sensor node over UART.
 - **Two modes**
   - *Controller*: polls `READ?` every 100 ms and `STATUS?` every 10th poll, sends `SET GAIN`.
   - *Sensor node*: reads `timestamp,ax,ay,az` lines at 200 Hz and reports the RMS of the dynamic acceleration over a 200-sample window (gravity removed).
-- **Status indicator**: OK, WARN or FAULT based on adjustable limits. FAULT is also raised after 3 missed replies in a row, when the controller reports a fault, or when the port drops.
+- **Status indicator**: OK, WARN or FAULT based on adjustable limits. FAULT is also raised after 3 missed replies in a row, when the controller reports a fault, or when the port drops. A controller fault is latched: it stays FAULT until `STATUS?` answers `OK` again, even while readings are in range.
+- **Incomplete lines**: a line cut off by the read timeout (no `
+`) counts as a missed reply, never as a reading, so `VAL 0.4` from a half-received `VAL 0.41` is not used.
 - **Live plot** of the last 60 s with the warn and fault limits drawn in. Missed replies show as gaps.
 - **CSV log** of every reading, status change and event (connect, gain change, timeout, bad reply), flushed on every row.
 - **Responsive UI**: all blocking serial I/O runs on a `QThread`, and results come back to the GUI thread through Qt signals.
@@ -96,16 +98,16 @@ Plug in the STM32 Nucleo board, choose its COM port, set the baud rate to
 pytest -v                       # set QT_QPA_PLATFORM=offscreen on a headless machine
 ```
 
-76 tests:
+83 tests:
 
 | File | What it covers |
 |---|---|
 | `test_parser.py` | every valid reply, garbage lines, non-ASCII bytes, NaN/inf, timeouts, sample lines |
-| `test_monitor.py` | threshold bands and boundaries, transitions only, missed-reply counter, device faults |
-| `test_serial_link.py` | command round trips against a fake serial object, rejected commands, timeouts, write failures, stale-input flushing |
+| `test_monitor.py` | threshold bands and boundaries, transitions only, missed-reply counter, device faults and the fault latch |
+| `test_serial_link.py` | command round trips against a fake serial object, rejected commands, timeouts, write failures, stale-input flushing, lines cut off by the timeout |
 | `test_simulator.py` | protocol, gain scaling, spike and silence injection, end to end over TCP through pySerial |
 | `test_stream_and_log.py` | RMS window maths, dropped samples, CSV format and appending |
-| `test_app.py` | the real window driven with pytest-qt against the simulator: live plot, gain change, spike FAULT, silence FAULT, stream mode, bad port |
+| `test_app.py` | the real window driven with pytest-qt against the simulator: live plot, gain change, spike FAULT, silence FAULT, latched controller FAULT, stream mode, bad port |
 
 ## Demo capture
 

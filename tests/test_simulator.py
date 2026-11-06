@@ -116,3 +116,11 @@ def test_end_to_end_over_tcp_with_pyserial():
         assert sim.gain == 3
     finally:
         link.close()
+
+
+def test_device_fault_reported_on_status():
+    sim = quiet_sim()
+    sim.device_fault = "OVERTEMP"
+    assert sim.handle("STATUS?") == "FAULT OVERTEMP"
+    sim.device_fault = None
+    assert sim.handle("STATUS?") == "OK"
