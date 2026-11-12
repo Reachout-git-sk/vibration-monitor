@@ -1,15 +1,21 @@
-"""Stand-in for the vibration controller (and the sensor node) so the app can be
-developed and tested without hardware.
+"""Stand-in for the hardware so the app can be developed and tested without it.
 
-Command mode (default) answers the controller protocol:
+The simulated chain is the same as a real installation:
+
+    Machine  ->  Sensor  ->  Controller  ->  app
+    (shakes)     (measures,   (computes RMS,
+                  raw g)       answers commands)
+
+Command mode (default): the app talks to the controller.
     python -m vibmon.simulator --tcp 7000          app connects to socket://localhost:7000
     python -m vibmon.simulator --port COM11        one end of a com0com / socat pair
 
-Stream mode imitates the STM32 sensor node, pushing `timestamp,ax,ay,az` lines:
+Stream mode: the app reads the sensor directly (like the STM32 sensor node) and
+computes the RMS itself:
     python -m vibmon.simulator --tcp 7001 --stream --rate 200
 
-Faults are injected at random: short spikes above the fault limit, and periods
-of silence where the controller stops answering.
+Faults are injected at random: impacts on the machine (spikes above the fault
+limit), and periods of silence where the controller stops answering.
 """
 import argparse
 import math
@@ -18,11 +24,47 @@ import socket
 import time
 
 
+class Machine:
+    """The thing that shakes: a sine vibration whose size drifts slowly with load."""
+
+    def __init__(self, amplitude_g=0.5, vib_hz=50, drift=0.25):
+        self.amplitude_g = amplitude_g  # peak acceleration in g
+        self.vib_hz = vib_hz
+        self.drift = drift              # +/- share of the amplitude over a 20 s load cycle
+        self.impact = None              # (start_t, end_t, amplitude_g) while something hits it
+
+    def accel(self, t):
+        """Vertical acceleration of the machine at time t (seconds), in g."""
+        amp = self.amplitude_g * (1 + self.drift * math.sin(2 * math.pi * t / 20))
+        if self.impact and self.impact[0] <= t <= self.impact[1]:
+            amp = self.impact[2]
+        return amp * math.sin(2 * math.pi * self.vib_hz * t)
+
+
+class Sensor:
+    """An accelerometer bolted to the machine: it also feels gravity and adds noise."""
+
+    def __init__(self, machine, rng, noise_g=0.01):
+        self.machine = machine
+        self.rng = rng
+        self.noise_g = noise_g
+
+    def read(self, t):
+        """One raw sample (ax, ay, az) in g at time t; gravity (1 g) is on z."""
+        a = self.machine.accel(t)
+        gauss, s = self.rng.gauss, self.noise_g
+        return 0.5 * a + gauss(0, s), 0.3 * a + gauss(0, s), 1.0 + a + gauss(0, s)
+
+
 class ControllerSim:
+    """Reads the sensor, computes the RMS vibration, and answers the text protocol."""
+
+    SAMPLE_HZ = 1000     # how fast the controller samples the sensor
+    WINDOW_S = 0.1       # RMS over the last 100 ms = 100 samples
+
     def __init__(self, base_rms=0.35, spike_prob=0.02, silence_prob=0.004,
                  silence_s=2.0, seed=None, clock=time.monotonic):
         self.gain = 1.0
-        self.base_rms = base_rms
         self.spike_prob = spike_prob
         self.silence_prob = silence_prob
         self.silence_s = silence_s
@@ -32,15 +74,24 @@ class ControllerSim:
         self.silent_until = 0.0
         self.faults_injected = {"spike": 0, "silence": 0}
         self.device_fault = None  # set to a code, e.g. "OVERTEMP", to report FAULT on STATUS?
+        # a sine's RMS is peak / sqrt(2), so this peak gives base_rms
+        self.machine = Machine(amplitude_g=base_rms * math.sqrt(2))
+        self.sensor = Sensor(self.machine, self.rng)
 
     def reading(self):
-        t = self.clock() - self.t0
-        # slow drift (machine load changing) plus sensor noise
-        level = self.base_rms * (1 + 0.25 * math.sin(2 * math.pi * t / 20)) + self.rng.gauss(0, 0.03)
+        """READ?: sample the sensor over the last window and return the RMS in g."""
+        now = self.clock() - self.t0
         if self.rng.random() < self.spike_prob:
+            # something hits the machine: a short, strong shake
             self.faults_injected["spike"] += 1
-            level = self.rng.uniform(2.2, 3.5)
-        return max(0.0, level * self.gain)
+            rms = self.rng.uniform(2.2, 3.5)
+            self.machine.impact = (now - self.WINDOW_S, now, rms * math.sqrt(2))
+        n = int(self.SAMPLE_HZ * self.WINDOW_S)
+        z = [self.sensor.read(now - k / self.SAMPLE_HZ)[2] for k in range(n)]
+        self.machine.impact = None  # the hit is over
+        mean = sum(z) / n  # the 1 g of gravity
+        rms = math.sqrt(sum((v - mean) ** 2 for v in z) / n)
+        return rms * self.gain
 
     def handle(self, line):
         """Return the reply for one command line, or None to stay silent."""
@@ -74,24 +125,18 @@ class ControllerSim:
 
 
 class SensorNodeSim:
-    """Generates the same line format the STM32 firmware sends."""
+    """The sensor on its own, streaming raw samples in the STM32 firmware's line format."""
 
     def __init__(self, rate_hz=200, vib_hz=50, amplitude_g=0.3, seed=None):
         self.rate_hz = rate_hz
-        self.vib_hz = vib_hz
-        self.amplitude_g = amplitude_g
-        self.rng = random.Random(seed)
+        self.sensor = Sensor(Machine(amplitude_g, vib_hz, drift=0), random.Random(seed))
         self.n = 0
 
     def next_line(self):
         t = self.n / self.rate_hz
-        ts_ms = int(t * 1000)
-        a = self.amplitude_g * math.sin(2 * math.pi * self.vib_hz * t)
-        ax = 0.5 * a + self.rng.gauss(0, 0.01)
-        ay = 0.3 * a + self.rng.gauss(0, 0.01)
-        az = 1.0 + a + self.rng.gauss(0, 0.01)
+        ax, ay, az = self.sensor.read(t)
         self.n += 1
-        return f"{ts_ms},{ax:.4f},{ay:.4f},{az:.4f}"
+        return f"{int(t * 1000)},{ax:.4f},{ay:.4f},{az:.4f}"
 
 
 # ---- transports --------------------------------------------------------------

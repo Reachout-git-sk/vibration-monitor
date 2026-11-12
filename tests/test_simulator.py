@@ -1,3 +1,4 @@
+import random
 import socket
 import threading
 
@@ -5,7 +6,7 @@ import pytest
 
 from vibmon.parser import Ok, Value, parse_sample
 from vibmon.serial_link import SerialLink
-from vibmon.simulator import ControllerSim, SensorNodeSim, _serve_commands, run_tcp
+from vibmon.simulator import ControllerSim, Machine, Sensor, SensorNodeSim, _serve_commands, run_tcp
 from vibmon.stream import RmsWindow
 
 
@@ -124,3 +125,25 @@ def test_device_fault_reported_on_status():
     assert sim.handle("STATUS?") == "FAULT OVERTEMP"
     sim.device_fault = None
     assert sim.handle("STATUS?") == "OK"
+
+
+def test_machine_drifts_and_takes_impacts():
+    m = Machine(amplitude_g=1.0, vib_hz=50, drift=0)
+    assert m.accel(0.005) == pytest.approx(1.0)       # quarter cycle of 50 Hz = peak
+    m.impact = (0.0, 0.01, 3.0)
+    assert m.accel(0.005) == pytest.approx(3.0)
+
+
+def test_sensor_adds_gravity_on_z():
+    sensor = Sensor(Machine(amplitude_g=0.0), random.Random(1), noise_g=0.0)
+    assert sensor.read(0.123) == (0.0, 0.0, 1.0)
+
+
+def test_controller_rms_comes_from_the_sensor_samples():
+    clock = FakeClock()
+    sim = ControllerSim(base_rms=0.35, spike_prob=0, silence_prob=0, seed=1, clock=clock)
+    sim.machine.drift = 0
+    # 100 samples of the sensor, gravity removed, RMS of the 50 Hz sine = 0.35 g
+    assert sim.reading() == pytest.approx(0.35, abs=0.005)
+    sim.machine.amplitude_g = 0
+    assert sim.reading() == pytest.approx(0.0, abs=0.02)   # only sensor noise left

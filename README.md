@@ -36,7 +36,7 @@ vibmon/
   datalog.py       CSV logger
   acquisition.py   QThread that owns the port and emits signals
   app.py           PySide6 window
-  simulator.py     controller + sensor node simulator with fault injection
+  simulator.py     Machine -> Sensor -> Controller chain, with fault injection
 ```
 
 The serial, parsing and GUI layers are kept apart. The parser and monitor have
@@ -65,6 +65,12 @@ pip install -e ".[dev]"
 ```
 
 ## Run
+
+The simulator models the same chain as a real installation: a `Machine` that
+shakes (a 50 Hz sine whose size drifts with load, plus random impacts), a `Sensor`
+bolted to it (adds 1 g of gravity and a little noise), and a `ControllerSim` that
+samples the sensor at 1 kHz, computes the RMS over the last 100 ms and answers the
+protocol. In stream mode the app reads the sensor directly and computes the RMS itself.
 
 Start the simulator in one terminal:
 
@@ -98,14 +104,14 @@ Plug in the STM32 Nucleo board, choose its COM port, set the baud rate to
 pytest -v                       # set QT_QPA_PLATFORM=offscreen on a headless machine
 ```
 
-83 tests:
+86 tests:
 
 | File | What it covers |
 |---|---|
 | `test_parser.py` | every valid reply, garbage lines, non-ASCII bytes, NaN/inf, timeouts, sample lines |
 | `test_monitor.py` | threshold bands and boundaries, transitions only, missed-reply counter, device faults and the fault latch |
 | `test_serial_link.py` | command round trips against a fake serial object, rejected commands, timeouts, write failures, stale-input flushing, lines cut off by the timeout |
-| `test_simulator.py` | protocol, gain scaling, spike and silence injection, end to end over TCP through pySerial |
+| `test_simulator.py` | machine, sensor and controller RMS, protocol, gain scaling, spike and silence injection, end to end over TCP through pySerial |
 | `test_stream_and_log.py` | RMS window maths, dropped samples, CSV format and appending |
 | `test_app.py` | the real window driven with pytest-qt against the simulator: live plot, gain change, spike FAULT, silence FAULT, latched controller FAULT, stream mode, bad port |
 
